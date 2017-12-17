@@ -27,9 +27,13 @@ import com.arimil.blackjackclient.Card;
 import com.arimil.blackjackclient.R;
 import com.arimil.blackjackclient.User;
 import com.arimil.blackjackclient.tasks.UserBetTask;
+import com.arimil.blackjackclient.tasks.UserHitTask;
 
 
 public class GameActivity extends AppCompatActivity {
+
+    private final String RESULT_DIALOG_ID = "resultDialog";
+    private final String BET_DIALOG_ID = "betDialog";
 
     // Broadcast Receiver
     private GameBroadcastReceiver mGameBroadcastReceiver;
@@ -60,14 +64,22 @@ public class GameActivity extends AppCompatActivity {
 
     }
 
-    public void BetButtonClick(View view) {
+    private void showDialog(String dialogId, DialogFragment dialog) {
         FragmentTransaction ft = getFragmentManager().beginTransaction();
-        Fragment prev = getFragmentManager().findFragmentByTag("betDialog");
+        Fragment prev = getFragmentManager().findFragmentByTag(RESULT_DIALOG_ID);
+        if (prev != null) {
+            ft.remove(prev);
+        }
+        prev = getFragmentManager().findFragmentByTag(BET_DIALOG_ID);
         if (prev != null) {
             ft.remove(prev);
         }
         ft.addToBackStack(null);
-        BetDialogFragment.newInstance(User.currency).show(ft, "betDialog");
+        dialog.show(ft, dialogId);
+    }
+
+    public void BetButtonClick(View view) {
+        showDialog(BET_DIALOG_ID, BetDialogFragment.newInstance(User.currency));
     }
 
     public void HoldButtonClick(View view) {
@@ -84,7 +96,7 @@ public class GameActivity extends AppCompatActivity {
     }
 
     public void HitButtonClick(View view) {
-
+        new UserHitTask().execute(this);
     }
 
     private void DrawCard(String card, boolean dealer) {
@@ -147,7 +159,7 @@ public class GameActivity extends AppCompatActivity {
         public void onCreate(Bundle savedInstanceState) {
             super.onCreate(savedInstanceState);
             mCurrency = getArguments().getInt("currency");
-
+            setCancelable(false);
         }
 
         @SuppressLint("InflateParams")
@@ -183,14 +195,48 @@ public class GameActivity extends AppCompatActivity {
                         @Override
                         public void onClick(DialogInterface dialogInterface, int i) {
                             new UserBetTask(mSeekBar.getProgress()).execute(getActivity());
+                            dismiss();
                         }
                     })
                     .setNegativeButton(android.R.string.cancel, new DialogInterface.OnClickListener() {
                         @Override
                         public void onClick(DialogInterface dialogInterface, int i) {
-
+                            dismiss();
                         }
                     })
+                    .create();
+        }
+    }
+
+    public static class ResultDialogFragment extends DialogFragment {
+        int mCurrency;
+        String mResult;
+
+        static BetDialogFragment newInstance(int currency, String result) {
+            BetDialogFragment f = new BetDialogFragment();
+
+            Bundle args = new Bundle();
+            args.putInt("currency", currency);
+            args.putString("result", result);
+            f.setArguments(args);
+
+            return f;
+        }
+
+        @Override
+        public void onCreate(Bundle savedInstanceState) {
+            super.onCreate(savedInstanceState);
+            mCurrency = getArguments().getInt("currency");
+            mResult = getArguments().getString("result");
+            setCancelable(false);
+        }
+
+        @Override
+        public Dialog onCreateDialog(Bundle savedInstanceState) {
+            return new AlertDialog.Builder(getActivity())
+                    .setTitle(mResult)
+                    .setMessage(mCurrency)
+                    .setPositiveButton(android.R.string.ok, null)
                     .create();
         }
     }
@@ -201,9 +247,11 @@ public class GameActivity extends AppCompatActivity {
         public void onReceive(Context context, Intent intent) {
             String type = intent.getStringExtra("type");
             switch (type) {
-                case "hit":
+                case "hit": {
+                    DrawCard(intent.getStringExtra("card"), false);
                     break;
-                case "bet":
+                }
+                case "bet": {
                     Button b = findViewById(R.id.bethit);
                     b.setText(R.string.Hit);
                     b.setOnClickListener(new View.OnClickListener() {
@@ -216,6 +264,21 @@ public class GameActivity extends AppCompatActivity {
                     DrawCard(intent.getStringExtra("card"), false);
                     DrawCard(intent.getStringExtra("dealer"), true);
                     break;
+                }
+                case "bust": {
+                    Button b = findViewById(R.id.bethit);
+                    b.setText(R.string.bet);
+                    b.setOnClickListener(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View view) {
+                            BetButtonClick(view);
+                        }
+                    });
+                    findViewById(R.id.hold).setEnabled(false);
+                    DrawCard(intent.getStringExtra("card"), false);
+                    showDialog(RESULT_DIALOG_ID, ResultDialogFragment.newInstance(User.currency, "Lose"));
+                    break;
+                }
 
             }
         }
