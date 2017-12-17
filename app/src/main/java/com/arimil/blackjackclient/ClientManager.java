@@ -17,15 +17,16 @@ public class ClientManager {
         client.addListener(new BlackjackListener(context));
         Network.register(client);
         client.start();
-        client.connect(Network.TIMEOUT, "10.0.2.2", Network.PORT);
+        client.connect(Network.TIMEOUT, "34.226.142.141", Network.PORT);
     }
 
     public static ClientManager getInstance(Context context) {
-        if (instance == null) {
+        if (instance == null || (!instance.client.isConnected())) {
             try {
                 instance = new ClientManager(context);
             } catch (IOException e) {
                 e.printStackTrace();
+                instance = null;
                 //show connection error dialog
             }
         }

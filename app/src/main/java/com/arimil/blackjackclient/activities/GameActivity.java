@@ -17,6 +17,7 @@ import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageView;
@@ -24,31 +25,26 @@ import android.widget.LinearLayout;
 import android.widget.SeekBar;
 
 import com.arimil.blackjackclient.Card;
+import com.arimil.blackjackclient.ClientManager;
 import com.arimil.blackjackclient.R;
 import com.arimil.blackjackclient.User;
 import com.arimil.blackjackclient.tasks.UserBetTask;
 import com.arimil.blackjackclient.tasks.UserHitTask;
+import com.arimil.blackjackclient.tasks.UserHoldTask;
 
 
 public class GameActivity extends AppCompatActivity {
 
-    private final String RESULT_DIALOG_ID = "resultDialog";
-    private final String BET_DIALOG_ID = "betDialog";
+    private static String mCurrentDialogID = "";
 
-    // Broadcast Receiver
-    private GameBroadcastReceiver mGameBroadcastReceiver;
-    private IntentFilter mIntentFilter;
-
-    @Override
-    protected void onResume() {
-        registerReceiver(mGameBroadcastReceiver, mIntentFilter);
-        super.onResume();
-    }
+    GameBroadcastReceiver mGameBroadcastReceiver;
 
     @Override
     protected void onPause() {
-        unregisterReceiver(mGameBroadcastReceiver);
         super.onPause();
+        unregisterReceiver(mGameBroadcastReceiver);
+        ClientManager.getInstance(this).client.close();
+        finish();
     }
 
     @Override
@@ -57,42 +53,34 @@ public class GameActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         //register broadcast receiver so we can interact with packets
         mGameBroadcastReceiver = new GameBroadcastReceiver();
-
-        mIntentFilter = new IntentFilter();
-        mIntentFilter.addAction(getPackageName() + ".GameActivity");
-        registerReceiver(mGameBroadcastReceiver, mIntentFilter);
+        IntentFilter intentFilter = new IntentFilter();
+        intentFilter.addAction(getPackageName() + ".GameActivity");
+        registerReceiver(mGameBroadcastReceiver, intentFilter);
 
     }
 
     private void showDialog(String dialogId, DialogFragment dialog) {
         FragmentTransaction ft = getFragmentManager().beginTransaction();
-        Fragment prev = getFragmentManager().findFragmentByTag(RESULT_DIALOG_ID);
-        if (prev != null) {
-            ft.remove(prev);
+
+        if (mCurrentDialogID != null) {
+            Fragment prev = getFragmentManager().findFragmentByTag(mCurrentDialogID);
+            if (prev != null) {
+                ft.remove(prev);
+            }
         }
-        prev = getFragmentManager().findFragmentByTag(BET_DIALOG_ID);
-        if (prev != null) {
-            ft.remove(prev);
-        }
+
         ft.addToBackStack(null);
         dialog.show(ft, dialogId);
+
+        mCurrentDialogID = dialogId;
     }
 
     public void BetButtonClick(View view) {
-        showDialog(BET_DIALOG_ID, BetDialogFragment.newInstance(User.currency));
+        showDialog("betDialog", BetDialogFragment.newInstance(User.currency));
     }
 
     public void HoldButtonClick(View view) {
-        Drawable card = getResources().getDrawable(R.drawable.card_1_of_clubs);
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        p.weight = 1;
-
-        ImageView cardView = new Card(this);
-        cardView.setImageDrawable(card);
-        cardView.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-        cardView.setLayoutParams(p);
-
-        ((LinearLayout) findViewById(R.id.dealerarea)).addView(cardView);
+        new UserHoldTask().execute(this);
     }
 
     public void HitButtonClick(View view) {
@@ -194,6 +182,8 @@ public class GameActivity extends AppCompatActivity {
                     .setPositiveButton(android.R.string.ok, new DialogInterface.OnClickListener() {
                         @Override
                         public void onClick(DialogInterface dialogInterface, int i) {
+                            if (mSeekBar.getProgress() == 0)
+                                return; //prevent a bet of 0
                             new UserBetTask(mSeekBar.getProgress()).execute(getActivity());
                             dismiss();
                         }
@@ -212,8 +202,8 @@ public class GameActivity extends AppCompatActivity {
         int mCurrency;
         String mResult;
 
-        static BetDialogFragment newInstance(int currency, String result) {
-            BetDialogFragment f = new BetDialogFragment();
+        static ResultDialogFragment newInstance(int currency, String result) {
+            ResultDialogFragment f = new ResultDialogFragment();
 
             Bundle args = new Bundle();
             args.putInt("currency", currency);
@@ -235,7 +225,7 @@ public class GameActivity extends AppCompatActivity {
         public Dialog onCreateDialog(Bundle savedInstanceState) {
             return new AlertDialog.Builder(getActivity())
                     .setTitle(mResult)
-                    .setMessage(mCurrency)
+                    .setMessage(String.valueOf(mCurrency))
                     .setPositiveButton(android.R.string.ok, null)
                     .create();
         }
@@ -252,6 +242,10 @@ public class GameActivity extends AppCompatActivity {
                     break;
                 }
                 case "bet": {
+                    //remove all cards from the play area
+                    ((ViewGroup) findViewById(R.id.playerarea)).removeAllViews();
+                    ((ViewGroup) findViewById(R.id.dealerarea)).removeAllViews();
+
                     Button b = findViewById(R.id.bethit);
                     b.setText(R.string.Hit);
                     b.setOnClickListener(new View.OnClickListener() {
@@ -276,10 +270,27 @@ public class GameActivity extends AppCompatActivity {
                     });
                     findViewById(R.id.hold).setEnabled(false);
                     DrawCard(intent.getStringExtra("card"), false);
-                    showDialog(RESULT_DIALOG_ID, ResultDialogFragment.newInstance(User.currency, "Lose"));
+                    showDialog("resultDialog", ResultDialogFragment.newInstance(User.currency, "Lose"));
                     break;
                 }
-
+                case "hold": {
+                    Button b = findViewById(R.id.bethit);
+                    b.setText(R.string.bet);
+                    b.setOnClickListener(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View view) {
+                            BetButtonClick(view);
+                        }
+                    });
+                    findViewById(R.id.hold).setEnabled(false);
+                    ((ViewGroup) findViewById(R.id.dealerarea)).removeAllViews();
+                    String[] cards = intent.getStringArrayExtra("dealer");
+                    for (String card : cards) {
+                        DrawCard(card, true);
+                    }
+                    String result = intent.getStringExtra("result");
+                    showDialog("resultDialog", ResultDialogFragment.newInstance(User.currency, result));
+                }
             }
         }
     }
